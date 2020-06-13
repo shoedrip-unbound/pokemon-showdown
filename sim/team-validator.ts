@@ -8,7 +8,7 @@
  */
 
 import {Dex} from './dex';
-
+const toID = Dex.Data.Tools.getId;
 /**
  * Describes a possible way to get a pokemon. Is not exhaustive!
  * sourcesBefore covers all sources that do not have exclusive
