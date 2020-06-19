@@ -388,8 +388,9 @@ export class CommandContext extends MessageContext {
 		}
 
 		// Output the message
-
-		if (message && message !== true && typeof message.then !== 'function') {
+		if (message && typeof message.then === 'function') {
+			message.then(() => this.update());
+		} else if (message && message !== true) {
 			if (this.pmTarget) {
 				Chat.sendPM(message, this.user, this.pmTarget);
 			} else {
@@ -759,38 +760,41 @@ export class CommandContext extends MessageContext {
 		return this.cmdToken === BROADCAST_TOKEN;
 	}
 	canBroadcast(ignoreCooldown?: boolean, suppressMessage?: string | null) {
-		if (!this.broadcasting && this.shouldBroadcast()) {
-			if (this.room instanceof Rooms.GlobalRoom) {
-				this.errorReply(`You have no one to broadcast this to.`);
-				this.errorReply(`To see it for yourself, use: /${this.message.slice(1)}`);
-				return false;
-			}
-			if (!this.pmTarget && !this.user.can('broadcast', null, this.room)) {
-				this.errorReply(`You need to be voiced to broadcast this command's information.`);
-				this.errorReply(`To see it for yourself, use: /${this.message.slice(1)}`);
-				return false;
-			}
-
-			// broadcast cooldown
-			const broadcastMessage = (suppressMessage || this.message).toLowerCase().replace(/[^a-z0-9\s!,]/g, '');
-
-			if (!ignoreCooldown && this.room && this.room.lastBroadcast === broadcastMessage &&
-				this.room.lastBroadcastTime >= Date.now() - BROADCAST_COOLDOWN &&
-				!this.user.can('bypassall')) {
-				this.errorReply("You can't broadcast this because it was just broadcasted.");
-				return false;
-			}
-
-			const message = this.canTalk(suppressMessage || this.message);
-			if (!message) {
-				this.errorReply(`To see it for yourself, use: /${this.message.slice(1)}`);
-				return false;
-			}
-
-			// canTalk will only return true with no message
-			this.message = message;
-			this.broadcastMessage = broadcastMessage;
+		if (this.broadcasting || !this.shouldBroadcast()) {
+			return true;
 		}
+
+		if (this.room instanceof Rooms.GlobalRoom) {
+			this.errorReply(`You have no one to broadcast this to.`);
+			this.errorReply(`To see it for yourself, use: /${this.message.slice(1)}`);
+			return false;
+		}
+
+		if (!this.pmTarget && !this.user.can('broadcast', null, this.room)) {
+			this.errorReply(`You need to be voiced to broadcast this command's information.`);
+			this.errorReply(`To see it for yourself, use: /${this.message.slice(1)}`);
+			return false;
+		}
+
+		// broadcast cooldown
+		const broadcastMessage = (suppressMessage || this.message).toLowerCase().replace(/[^a-z0-9\s!,]/g, '');
+
+		if (!ignoreCooldown && this.room && this.room.lastBroadcast === broadcastMessage &&
+			this.room.lastBroadcastTime >= Date.now() - BROADCAST_COOLDOWN &&
+			!this.user.can('bypassall')) {
+			this.errorReply("You can't broadcast this because it was just broadcasted.");
+			return false;
+		}
+
+		const message = this.canTalk(suppressMessage || this.message);
+		if (!message) {
+			this.errorReply(`To see it for yourself, use: /${this.message.slice(1)}`);
+			return false;
+		}
+
+		// canTalk will only return true with no message
+		this.message = message;
+		this.broadcastMessage = broadcastMessage;
 		return true;
 	}
 	runBroadcast(ignoreCooldown = false, suppressMessage: string | null = null) {
@@ -1475,40 +1479,6 @@ export const Chat = new class {
 
 	packageData: AnyObject = {};
 
-	uncacheTree(root: string) {
-		let toUncache = [require.resolve('../' + root)];
-		do {
-			const newuncache: string[] = [];
-			for (const target of toUncache) {
-				if (require.cache[target]) {
-					// cachedModule
-					const children: {id: string}[] = require.cache[target]!.children;
-					newuncache.push(
-						...(children
-							.filter(cachedModule => !cachedModule.id.endsWith('.node'))
-							.map(cachedModule => cachedModule.id))
-					);
-					delete require.cache[target];
-				}
-			}
-			toUncache = newuncache;
-		} while (toUncache.length > 0);
-	}
-
-	uncacheDir(root: string, followSymlink?: boolean) {
-		const absoluteRoot = followSymlink ? FS(root).realpathSync() : FS(root).path;
-		for (const key in require.cache) {
-			if (key.startsWith(absoluteRoot)) {
-				delete require.cache[key];
-			}
-		}
-	}
-
-	uncache(path: string) {
-		const absolutePath = require.resolve('../' + path);
-		delete require.cache[absolutePath];
-	}
-
 	loadPlugin(file: string) {
 		let plugin;
 		if (file.endsWith('.ts')) {
@@ -1824,10 +1794,8 @@ export const Chat = new class {
 	/**
 	 * Gets the dimension of the image at url. Returns 0x0 if the image isn't found, as well as the relevant error.
 	 */
-	getImageDimensions(url: string): Promise<{height: number, width: number, err?: Error}> {
-		return new Promise(resolve => {
-			probe(url).then(dimensions => resolve(dimensions), (err: Error) => resolve({height: 0, width: 0, err}));
-		});
+	getImageDimensions(url: string): Promise<{height: number, width: number}> {
+		return probe(url);
 	}
 
 	/**
@@ -1848,20 +1816,17 @@ export const Chat = new class {
 	/**
 	 * Generates dimensions to fit an image at url into a maximum size of maxWidth x maxHeight,
 	 * preserving aspect ratio.
+	 *
+	 * @return [width, height, resized]
 	 */
-	async fitImage(url: string, maxHeight = 300, maxWidth = 300) {
+	async fitImage(url: string, maxHeight = 300, maxWidth = 300): Promise<[number, number, boolean]> {
 		const {height, width} = await Chat.getImageDimensions(url);
 
-		if (width <= maxWidth && height <= maxHeight) return [width, height];
+		if (width <= maxWidth && height <= maxHeight) return [width, height, false];
 
-		let ratio;
-		if (height * (maxWidth / maxHeight) > width) {
-			ratio = maxHeight / height;
-		} else {
-			ratio = maxWidth / width;
-		}
+		const ratio = Math.min(maxHeight / height, maxWidth / width);
 
-		return [Math.round(width * ratio), Math.round(height * ratio)];
+		return [Math.round(width * ratio), Math.round(height * ratio), true];
 	}
 
 	/**
