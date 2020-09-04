@@ -457,6 +457,8 @@ export class RoomBattle extends RoomGames.RoomGame {
 	readonly title: string;
 	readonly allowRenames: boolean;
 	readonly format: string;
+	/** Will exist even if the game is unrated, in case it's later forced to be rated */
+	readonly ladder: string;
 	readonly gameType: string | undefined;
 	readonly challengeType: ChallengeType;
 	/**
@@ -475,12 +477,14 @@ export class RoomBattle extends RoomGames.RoomGame {
 	ended: boolean;
 	active: boolean;
 	replaySaved: boolean;
+	forcePublic: string | null = null;
 	playerTable: {[userid: string]: RoomBattlePlayer};
 	players: RoomBattlePlayer[];
 	p1: RoomBattlePlayer;
 	p2: RoomBattlePlayer;
 	p3: RoomBattlePlayer;
 	p4: RoomBattlePlayer;
+	inviteOnlySetter: ID | null;
 	logData: AnyObject | null;
 	endType: string;
 	/**
@@ -491,6 +495,7 @@ export class RoomBattle extends RoomGames.RoomGame {
 	turn: number;
 	rqid: number;
 	requestCount: number;
+	dataResolvers?: [((args: string[]) => void), ((error: Error) => void)][];
 	constructor(room: GameRoom, formatid: string, options: AnyObject) {
 		super(room);
 		const format = Dex.getFormat(formatid, true);
@@ -504,6 +509,7 @@ export class RoomBattle extends RoomGames.RoomGame {
 		this.gameType = format.gameType;
 		this.challengeType = options.challengeType;
 		this.rated = options.rated || 0;
+		this.ladder = typeof format.rated === 'string' ? toID(format.rated) : formatid;
 		// true when onCreateBattleRoom has been called
 		this.missingBattleStartMessage = !!options.inputLog;
 		this.started = false;
@@ -521,6 +527,7 @@ export class RoomBattle extends RoomGames.RoomGame {
 		this.p2 = null!;
 		this.p3 = null!;
 		this.p4 = null!;
+		this.inviteOnlySetter = null!;
 
 		// data to be logged
 		this.allowExtraction = {};
@@ -698,11 +705,9 @@ export class RoomBattle extends RoomGames.RoomGame {
 	}
 
 	async listen() {
-		let next;
 		let disconnected = false;
 		try {
-			// tslint:disable-next-line: no-conditional-assignment
-			while ((next = await this.stream.read())) {
+			for await (const next of this.stream) {
 				this.receive(next.split('\n'));
 			}
 		} catch (err) {
@@ -726,6 +731,12 @@ export class RoomBattle extends RoomGames.RoomGame {
 		for (const player of this.players) player.wantsTie = false;
 
 		switch (lines[0]) {
+		case 'requesteddata':
+			lines = lines.slice(1);
+			const [resolver] = this.dataResolvers!.shift()!;
+			resolver(lines);
+			break;
+
 		case 'update':
 			for (const line of lines.slice(1)) {
 				if (line.startsWith('|turn|')) {
@@ -807,7 +818,7 @@ export class RoomBattle extends RoomGames.RoomGame {
 			if (winner && !winner.registered) {
 				this.room.sendUser(winner, '|askreg|' + winner.id);
 			}
-			const [score, p1rating, p2rating] = await Ladders(this.format).updateRating(p1name, p2name, p1score, this.room);
+			const [score, p1rating, p2rating] = await Ladders(this.ladder).updateRating(p1name, p2name, p1score, this.room);
 			void this.logBattle(score, p1rating, p2rating);
 		} else if (Config.logchallenges) {
 			if (winnerid === p1id) {
@@ -878,8 +889,9 @@ export class RoomBattle extends RoomGames.RoomGame {
 		const logfolder = logsubfolder.split('-', 2).join('-');
 		const tier = this.room.format.toLowerCase().replace(/[^a-z0-9]+/g, '');
 		const logpath = `logs/${logfolder}/${tier}/${logsubfolder}/`;
+
 		await FS(logpath).mkdirp();
-		await FS(logpath + this.room.roomid + '.log.json').write(JSON.stringify(logData));
+		await FS(`${logpath}${this.room.getReplayData().id}.log.json`).write(JSON.stringify(logData));
 		// console.log(JSON.stringify(logData));
 	}
 	onConnect(user: User, connection: Connection | null = null) {
@@ -1014,17 +1026,14 @@ export class RoomBattle extends RoomGames.RoomGame {
 			void this.stream.write(`>player ${slot} ${JSON.stringify(options)}`);
 		}
 
-		if (user) this.room.auth.set(player.id, Users.PLAYER_SYMBOL);
+		if (user) {
+			this.room.auth.set(player.id, Users.PLAYER_SYMBOL);
+			if (this.rated && !this.forcePublic) {
+				this.forcePublic = user.battlesForcedPublic();
+			}
+		}
 		if (user?.inRooms.has(this.roomid)) this.onConnect(user);
 		return player;
-	}
-
-	forcedPublic() {
-		if (!this.rated) return;
-		for (const player of this.players) {
-			const user = player.getUser();
-			if (user?.forcedPublic) return user.forcedPublic;
-		}
 	}
 
 	makePlayer(user: User) {
@@ -1110,6 +1119,39 @@ export class RoomBattle extends RoomGames.RoomGame {
 
 		// @ts-ignore
 		this.room = null;
+		if (this.dataResolvers) {
+			for (const [, reject] of this.dataResolvers) {
+				// reject the promise, make whatever function called it return undefined
+				reject(new Error('Battle was destroyed.'));
+			}
+		}
+	}
+	async getTeam(user: User) {
+		const id = user.id;
+		const player = this.playerTable[id];
+		if (!player) return;
+		void this.stream.write(`>requestteam ${player.slot}`);
+		const teamDataPromise = new Promise<string[]>((resolve, reject) => {
+			if (!this.dataResolvers) this.dataResolvers = [];
+			this.dataResolvers.push([resolve, reject]);
+		});
+		const resultStrings = await teamDataPromise;
+		if (!resultStrings) return;
+		const result = resultStrings.map(item => Dex.fastUnpackTeam(item))[0];
+		return result;
+	}
+	onChatMessage(message: string, user: User) {
+		void this.stream.write(`>chat-inputlogonly ${user.getIdentity(this.room.roomid)}|${message}`);
+	}
+	async getLog(): Promise<string[] | void> {
+		if (!this.logData) this.logData = {};
+		void this.stream.write('>requestlog');
+		const logPromise = new Promise<string[]>((resolve, reject) => {
+			if (!this.dataResolvers) this.dataResolvers = [];
+			this.dataResolvers.push([resolve, reject]);
+		});
+		const result = await logPromise;
+		return result;
 	}
 }
 
@@ -1153,6 +1195,16 @@ export class RoomBattleStream extends BattleStream {
 
 	_writeLine(type: string, message: string) {
 		switch (type) {
+		case 'chat-inputlogonly':
+			this.battle.inputLog.push(`>chat ${message}`);
+			break;
+		case 'chat':
+			this.battle.inputLog.push(`>chat ${message}`);
+			this.battle.add('chat', `${message}`);
+			break;
+		case 'requestlog':
+			this.push(`requesteddata\n${this.battle.inputLog.join('\n')}`);
+			break;
 		case 'eval':
 			const battle = this.battle;
 			battle.inputLog.push(`>${type} ${message}`);
@@ -1189,6 +1241,16 @@ export class RoomBattleStream extends BattleStream {
 				battle.add('', '<<< error: ' + e.message);
 			}
 			break;
+		case 'requestteam':
+			message = message.trim();
+			const slotNum = parseInt(message.slice(1)) - 1;
+			if (isNaN(slotNum) || slotNum < 0) {
+				throw new Error(`Team requested for slot ${message}, but that slot does not exist.`);
+			}
+			const side = this.battle.sides[slotNum];
+			const team = Dex.packTeam(side.team);
+			this.push(`requesteddata\n${team}`);
+			break;
 		default: super._writeLine(type, message);
 		}
 	}
@@ -1208,6 +1270,8 @@ if (!PM.isParentProcess) {
 	global.Config = require('./config-loader').Config;
 	// tslint:disable-next-line: no-var-requires
 	global.Chat = require('./chat').Chat;
+	// tslint:disable-next-line: no-var-requires
+	global.Dex = require('../sim/dex').Dex;
 	// @ts-ignore ???
 	global.Monitor = {
 		crashlog(error: Error, source = 'A simulator process', details: {} | null = null) {

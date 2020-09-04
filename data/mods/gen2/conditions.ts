@@ -1,4 +1,4 @@
-export const BattleStatuses: {[k: string]: ModdedPureEffectData} = {
+export const Conditions: {[k: string]: ModdedConditionData} = {
 	brn: {
 		name: 'brn',
 		effectType: 'Status',
@@ -173,7 +173,7 @@ export const BattleStatuses: {[k: string]: ModdedPureEffectData} = {
 		onEnd(target) {
 			// Confusion begins even if already confused
 			delete target.volatiles['confusion'];
-			target.addVolatile('confusion');
+			if (!target.side.getSideCondition('safeguard')) target.addVolatile('confusion');
 		},
 		onLockMove(pokemon) {
 			return this.effectData.move;
@@ -237,5 +237,3 @@ function residualdmg(battle: Battle, pokemon: Pokemon) {
 		battle.damage(battle.clampIntRange(Math.floor(pokemon.maxhp / 8), 1), pokemon);
 	}
 }
-
-exports.BattleStatuses = BattleStatuses;

@@ -6,7 +6,7 @@ type FilterWord = [RegExp, string, string, string | null, number];
 type MonitorHandler = (
 	this: CommandContext,
 	line: FilterWord,
-	room: ChatRoom | GameRoom | null,
+	room: Room | null,
 	user: User,
 	message: string,
 	lcMessage: string,
@@ -111,7 +111,7 @@ Chat.registerMonitor('autolock', {
 			if (room) {
 				void Punishments.autolock(
 					user, room, 'ChatMonitor', `Filtered phrase: ${word}`,
-					`<${room.roomid}> ${user.name}: ${message}${reason ? ` __(${reason})__` : ''}`, true
+					`<<${room.roomid}>> ${user.name}: ${message}${reason ? ` __(${reason})__` : ''}`, true
 				);
 			} else {
 				this.errorReply(`Please do not say '${match[0]}'.`);
@@ -181,7 +181,7 @@ Chat.registerMonitor('evasion', {
 			if (room) {
 				void Punishments.autolock(
 					user, room, 'FilterEvasionMonitor', `Evading filter: ${message} (${match[0]} => ${word})`,
-					`<${room.roomid}> ${user.name}: SPOILER: \`\`${message}\`\` __(${match[0]} => ${word})__`
+					`<<${room.roomid}>> ${user.name}: SPOILER: \`\`${message}\`\` __(${match[0]} => ${word})__`
 				);
 			} else {
 				this.errorReply(`Please do not say '${word}'.`);
@@ -232,7 +232,7 @@ Chat.registerMonitor('battlefilter', {
 			if (room) {
 				room.mute(user);
 				this.errorReply(`You have been muted for using a banned phrase. Please do not say '${match[0]}'.`);
-				const text = `[BattleMonitor] <${room.roomid}> MUTED: ${user.name}: ${message}${reason ? ` __(${reason})__` : ''}`;
+				const text = `[BattleMonitor] <<${room.roomid}>> MUTED: ${user.name}: ${message}${reason ? ` __(${reason})__` : ''}`;
 				const adminlog = Rooms.get('adminlog');
 				if (adminlog) {
 					adminlog.add(`|c|~|${text}`).update();
@@ -417,13 +417,24 @@ export const nicknamefilter: NameFilter = (name, user) => {
 	for (const list in filterWords) {
 		if (Chat.monitors[list].location === 'BATTLES') continue;
 		for (const line of filterWords[list]) {
-			const [regex] = line;
+			let [regex, word] = line;
+			if (Chat.monitors[list].punishment === 'EVASION') {
+				// Evasion banwords by default require whitespace on either side.
+				// If we didn't remove it here, it would be quite easy to evade the filter
+				// and use slurs in Pokémon nicknames.
+				regex = new RegExp(regex.toString().replace('/\\b', '').replace('\\b/i', ''), 'i');
+			}
 
 			if (regex.test(lcName)) {
 				if (Chat.monitors[list].punishment === 'AUTOLOCK') {
 					void Punishments.autolock(
 						user, 'staff', `NameMonitor`, `inappropriate Pokémon nickname: ${name}`,
 						`${user.name} - using an inappropriate Pokémon nickname: ${name}`, true
+					);
+				} else if (Chat.monitors[list].punishment === 'EVASION') {
+					void Punishments.autolock(
+						user, 'staff', 'FilterEvasionMonitor', `Evading filter in Pokémon nickname (${name} => ${word})`,
+						`${user.name}: Pokémon nicknamed SPOILER: \`\`${name} => ${word}\`\``
 					);
 				}
 				line[4]++;
@@ -449,9 +460,8 @@ export const statusfilter: StatusFilter = (status, user) => {
 	// Check for blatant staff impersonation attempts. Ideally this could be completely generated from Config.grouplist
 	// for better support for side servers, but not all ranks are staff ranks or should necessarily be filted.
 	// eslint-disable-next-line max-len
-	if (/\b(?:global|room|upper|senior)?\s*(?:staff|admin|administrator|leader|owner|founder|mod|moderator|driver|voice|operator|sysop|creator)\b/gi.test(lcStatus)) {
-		return '';
-	}
+	const impersonationRegex = /\b(?:global|room|upper|senior)?\s*(?:staff|admin|administrator|leader|owner|founder|mod|moderator|driver|voice|operator|sysop|creator)\b/gi;
+	if (!user.can('lock') && impersonationRegex.test(lcStatus)) return '';
 
 	for (const list in filterWords) {
 		if (Chat.monitors[list].location === 'BATTLES') continue;
@@ -567,9 +577,8 @@ export const commands: ChatCommands = {
 			}
 			saveFilters(true);
 			const output = `'${word}' was added to the ${list} list.`;
-			const upperStaff = Rooms.get('upperstaff');
-			if (upperStaff) upperStaff.add(output).update();
-			if (room.roomid !== 'upperstaff') return this.sendReply(output);
+			Rooms.get('upperstaff')?.add(output).update();
+			if (room?.roomid !== 'upperstaff') this.sendReply(output);
 		},
 		remove(target, room, user) {
 			if (!this.can('rangeban')) return false;
@@ -592,9 +601,8 @@ export const commands: ChatCommands = {
 			this.globalModlog(`REMOVEFILTER`, null, `'${words.join(', ')}' from ${list} list by ${user.name}`);
 			saveFilters(true);
 			const output = `'${words.join(', ')}' ${Chat.plural(words, "were", "was")} removed from the ${list} list.`;
-			const upperStaff = Rooms.get('upperstaff');
-			if (upperStaff) upperStaff.add(output).update();
-			if (room.roomid !== 'upperstaff') return this.sendReply(output);
+			Rooms.get('upperstaff')?.add(output).update();
+			if (room?.roomid !== 'upperstaff') this.sendReply(output);
 		},
 		'': 'view',
 		list: 'view',

@@ -4,8 +4,7 @@
  *
  * @license MIT
  */
-import {Dex} from './dex';
-global.toID = Dex.getId;
+import {Dex, toID} from './dex';
 import * as Data from './dex-data';
 import {Field} from './field';
 import {Pokemon, EffectState, RESTORATIVE_BERRIES} from './pokemon';
@@ -118,7 +117,7 @@ export class Battle {
 	activeTarget: Pokemon | null;
 
 	lastMove: ActiveMove | null;
-	lastMoveThisTurn: Move | null;
+	lastSuccessfulMoveThisTurn: ID | null;
 	lastMoveLine: number;
 	lastDamage: number;
 	abilityOrder: number;
@@ -139,8 +138,11 @@ export class Battle {
 
 	trunc: (num: number, bits?: number) => number;
 	clampIntRange: (num: any, min?: number, max?: number) => number;
-
+	toID = toID;
 	constructor(options: BattleOptions) {
+		this.log = [];
+		this.add('t:', Math.floor(Date.now() / 1000));
+
 		const format = options.format || Dex.getFormat(options.formatid, true);
 		this.format = format;
 		this.dex = Dex.forFormat(format);
@@ -174,7 +176,6 @@ export class Battle {
 		this.queue = new BattleQueue(this);
 		this.faintQueue = [];
 
-		this.log = [];
 		this.inputLog = [];
 		this.messageLog = [];
 		this.sentLogPos = 0;
@@ -200,7 +201,7 @@ export class Battle {
 
 		this.lastMove = null;
 		this.lastMoveLine = -1;
-		this.lastMoveThisTurn = null;
+		this.lastSuccessfulMoveThisTurn = null;
 		this.lastDamage = 0;
 		this.abilityOrder = 0;
 
@@ -300,10 +301,8 @@ export class Battle {
 
 	clearActiveMove(failed?: boolean) {
 		if (this.activeMove) {
-			this.lastMoveThisTurn = null;
 			if (!failed) {
 				this.lastMove = this.activeMove;
-				this.lastMoveThisTurn = this.activeMove;
 			}
 			this.activeMove = null;
 			this.activePokemon = null;
@@ -1409,7 +1408,7 @@ export class Battle {
 
 	nextTurn() {
 		this.turn++;
-		this.lastMoveThisTurn = null;
+		this.lastSuccessfulMoveThisTurn = null;
 
 		const trappedBySide: boolean[] = [];
 		const stalenessBySide: ('internal' | 'external' | undefined)[] = [];
@@ -1424,6 +1423,8 @@ export class Battle {
 				pokemon.moveLastTurnResult = pokemon.moveThisTurnResult;
 				pokemon.moveThisTurnResult = undefined;
 				pokemon.hurtThisTurn = false;
+				pokemon.statsRaisedThisTurn = false;
+				pokemon.statsLoweredThisTurn = false;
 
 				pokemon.maybeDisabled = false;
 				for (const moveSlot of pokemon.moveSlots) {
@@ -1432,6 +1433,7 @@ export class Battle {
 				}
 				this.runEvent('DisableMove', pokemon);
 				if (!pokemon.ateBerry) pokemon.disableMove('belch');
+				if (!pokemon.getItem().isBerry) pokemon.disableMove('stuffcheeks');
 
 				// If it was an illusion, it's not any more
 				if (pokemon.getLastAttackedBy() && this.gen >= 7) pokemon.knownType = true;
@@ -1497,9 +1499,8 @@ export class Battle {
 				if (pokemon.fainted) continue;
 
 				sideTrapped = sideTrapped && pokemon.trapped;
-				if (pokemon.staleness) {
-					sideStaleness = sideStaleness === 'external' ? sideStaleness : pokemon.staleness;
-				}
+				const staleness = pokemon.volatileStaleness || pokemon.staleness;
+				if (staleness) sideStaleness = sideStaleness === 'external' ? sideStaleness : staleness;
 				pokemon.activeTurns++;
 			}
 			trappedBySide.push(sideTrapped);
@@ -1554,7 +1555,7 @@ export class Battle {
 			const side = this.sides[i];
 
 			for (const pokemon of side.pokemon) {
-				if (!pokemon.fainted && !pokemon.staleness) {
+				if (!pokemon.fainted && !(pokemon.volatileStaleness || pokemon.staleness)) {
 					canSwitch[i] = true;
 					break;
 				}
@@ -2214,7 +2215,7 @@ export class Battle {
 		// Final modifier. Modifiers that modify damage after min damage check, such as Life Orb.
 		baseDamage = this.runEvent('ModifyDamage', pokemon, target, move, baseDamage);
 
-		if ((move.isZOrMaxPowered || move.isZOrMaxPowered) && target.getMoveHitData(move).zBrokeProtect) {
+		if (move.isZOrMaxPowered && target.getMoveHitData(move).zBrokeProtect) {
 			baseDamage = this.modify(baseDamage, 0.25);
 			this.add('-zbroken', target);
 		}
@@ -2634,23 +2635,23 @@ export class Battle {
 
 		// switching (fainted pokemon, U-turn, Baton Pass, etc)
 
-		if (!this.queue.length || (this.gen <= 3 && ['move', 'residual'].includes(this.queue[0].choice))) {
+		if (!this.queue.peek() || (this.gen <= 3 && ['move', 'residual'].includes(this.queue.peek()!.choice))) {
 			// in gen 3 or earlier, switching in fainted pokemon is done after
 			// every move, rather than only at the end of the turn.
 			this.checkFainted();
 		} else if (action.choice === 'megaEvo' && this.gen === 7) {
 			this.eachEvent('Update');
 			// In Gen 7, the action order is recalculated for a Pokémon that mega evolves.
-			for (const [i, queuedAction] of this.queue.entries()) {
+			for (const [i, queuedAction] of this.queue.list.entries()) {
 				if (queuedAction.pokemon === action.pokemon && queuedAction.choice === 'move') {
-					this.queue.splice(i, 1);
+					this.queue.list.splice(i, 1);
 					queuedAction.mega = 'done';
 					this.queue.insertChoice(queuedAction, true);
 					break;
 				}
 			}
 			return false;
-		} else if (this.queue.length && this.queue[0].choice === 'instaswitch') {
+		} else if (this.queue.peek()?.choice === 'instaswitch') {
 			return false;
 		}
 
@@ -2687,10 +2688,10 @@ export class Battle {
 
 		if (this.gen < 5) this.eachEvent('Update');
 
-		if (this.gen >= 8 && this.queue.length && this.queue[0].choice === 'move') {
+		if (this.gen >= 8 && this.queue.peek()?.choice === 'move') {
 			// In gen 8, speed is updated dynamically so update the queue's speed properties and sort it.
 			this.updateSpeed();
-			for (const queueAction of this.queue) {
+			for (const queueAction of this.queue.list) {
 				if (queueAction.pokemon) this.getActionSpeed(queueAction);
 			}
 			this.queue.sort();
@@ -2701,6 +2702,7 @@ export class Battle {
 
 	go() {
 		this.add('');
+		this.add('t:', Math.floor(Date.now() / 1000));
 		if (this.requestState) this.requestState = '';
 
 		if (!this.midTurn) {
@@ -2709,8 +2711,8 @@ export class Battle {
 			this.midTurn = true;
 		}
 
-		while (this.queue.length) {
-			const action = this.queue.shift()!;
+		let action;
+		while ((action = this.queue.shift())) {
 			this.runAction(action);
 			if (this.requestState || this.ended) return;
 		}
@@ -2756,7 +2758,7 @@ export class Battle {
 	commitDecisions() {
 		this.updateSpeed();
 
-		const oldQueue = this.queue.slice();
+		const oldQueue = this.queue.list;
 		this.queue.clear();
 		if (!this.allChoicesDone()) throw new Error("Not all choices done");
 
@@ -2770,7 +2772,7 @@ export class Battle {
 		this.clearRequest();
 
 		this.queue.sort();
-		this.queue.push(...oldQueue);
+		this.queue.list.push(...oldQueue);
 
 		this.requestState = '';
 		for (const side of this.sides) {
@@ -3232,8 +3234,8 @@ export class Battle {
 				this.sides[i] = null!;
 			}
 		}
-		for (const action of this.queue) {
-			delete action.pokemon;
+		for (const action of this.queue.list) {
+			delete (action as any).pokemon;
 		}
 
 		this.queue.battle = null!;

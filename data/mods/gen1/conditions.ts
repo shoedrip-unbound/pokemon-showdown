@@ -1,14 +1,14 @@
 /**
- * Statuses worked way different.
- * Sleep lasted longer, had no reset on switch and took a whole turn to wake up.
- * Frozen only thaws when hit by fire or Haze.
+ * Status worked very differently in Gen 1.
+ * - Sleep lasted longer, had no reset on switch and took a whole turn to wake up.
+ * - Frozen only thaws when hit by fire or Haze.
  *
- * Secondary effects to status (-speed, -atk) worked differently, so they are
+ * Stat boosts (-speed, -atk) also worked differently, so they are
  * separated as volatile statuses that are applied on switch in, removed
  * under certain conditions and re-applied under other conditions.
  */
 
-export const BattleStatuses: {[k: string]: ModdedPureEffectData} = {
+export const Conditions: {[k: string]: ModdedConditionData} = {
 	brn: {
 		name: 'brn',
 		effectType: 'Status',
@@ -228,6 +228,11 @@ export const BattleStatuses: {[k: string]: ModdedPureEffectData} = {
 		durationCallback() {
 			return this.random(3, 5);
 		},
+		onEnd(target) {
+			// Confusion begins even if already confused
+			delete target.volatiles['confusion'];
+			target.addVolatile('confusion');
+		},
 	},
 	stall: {
 		name: 'stall',
@@ -257,5 +262,3 @@ export const BattleStatuses: {[k: string]: ModdedPureEffectData} = {
 		},
 	},
 };
-
-exports.BattleStatuses = BattleStatuses;

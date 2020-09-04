@@ -5,18 +5,16 @@ const assert = require('assert').strict;
 const userUtils = require('../../users-utils');
 const User = userUtils.User;
 const Connection = userUtils.Connection;
-
-let Trivia;
-let FirstModeTrivia;
-let TimerModeTrivia;
-let NumberModeTrivia;
+const trivia = require('../../../.server-dist/chat-plugins/trivia');
+const Trivia = trivia.Trivia;
+const FirstModeTrivia = trivia.FirstModeTrivia;
+const TimerModeTrivia = trivia.TimerModeTrivia;
+const NumberModeTrivia = trivia.NumberModeTrivia;
 
 function makeUser(name, connection) {
 	const user = new User(connection);
 	user.forceRename(name, true);
-	user.connected = true;
 	Users.users.set(user.id, user);
-	user.joinRoom('global', connection);
 	user.joinRoom('trivia', connection);
 	return user;
 }
@@ -30,16 +28,6 @@ function destroyUser(user) {
 
 describe('Trivia', function () {
 	before(function () {
-		// The trivia module cannot be loaded outside of this scope because
-		// it makes reference to global.Config in the modules outermost scope,
-		// which makes the module fail to be loaded. Within the scope of thess
-		// unit test blocks however, Config is defined.
-		const trivia = require('../../../.server-dist/chat-plugins/trivia');
-		Trivia = trivia.Trivia;
-		FirstModeTrivia = trivia.FirstModeTrivia;
-		TimerModeTrivia = trivia.TimerModeTrivia;
-		NumberModeTrivia = trivia.NumberModeTrivia;
-
 		Rooms.global.addChatRoom('Trivia');
 		this.room = Rooms.get('trivia');
 	});
@@ -94,7 +82,7 @@ describe('Trivia', function () {
 		const name = this.user.name;
 		this.game.addTriviaPlayer(this.user);
 		this.user.forceRename('Not Morfent', true);
-		this.user.prevNames[userid] = name;
+		this.user.previousIDs.push(userid);
 
 		const user2 = makeUser(name, new Connection('127.0.0.3'));
 		this.game.addTriviaPlayer(user2);
@@ -127,9 +115,8 @@ describe('Trivia', function () {
 		this.game.kick(this.tarUser, this.user);
 
 		const userid = this.tarUser.id;
-		const name = this.tarUser.name;
 		this.tarUser.forceRename('Not Morfent', true);
-		this.tarUser.prevNames[userid] = name;
+		this.tarUser.previousIDs.push(userid);
 		this.game.addTriviaPlayer(this.tarUser);
 		assert.equal(this.game.playerCount, 0);
 	});

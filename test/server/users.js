@@ -137,12 +137,10 @@ describe('Users features', function () {
 					assert.equal(users[1].connected, true);
 				});
 
-				it('should update IP count properly', async function () {
+				it('should remove IPs properly', async function () {
 					const user = new User();
 					await Punishments.ban(user);
-					for (const ip in user.ips) {
-						assert.equal(user.ips[ip], 0);
-					}
+					assert.equal(user.ips.length, 0);
 				});
 			});
 
@@ -157,31 +155,18 @@ describe('Users features', function () {
 						if (room) room.destroy();
 					}
 				});
-				it(`should allow 's' permissions only on self`, function () {
-					const user = new User();
-					user.group = '+';
-					assert.equal(user.can('alts', user), true, 'targeting self');
-
-					const target = new User();
-					target.group = ' ';
-					assert.equal(user.can('alts', target), false, 'targeting lower rank');
-					target.group = '+';
-					assert.equal(user.can('alts', target), false, 'targeting same rank');
-					target.group = '%';
-					assert.equal(user.can('alts', target), false, 'targeting higher rank');
-				});
 				it(`should allow 'u' permissions on lower ranked users`, function () {
 					const user = new User();
-					user.group = '&';
-					assert.equal(user.can('promote', user), false, 'targeting self');
+					user.tempGroup = '@';
+					assert.equal(user.can('globalban', user), false, 'targeting self');
 
 					const target = new User();
-					target.group = ' ';
-					assert.equal(user.can('promote', target), true, 'targeting lower rank');
-					target.group = '&';
-					assert.equal(user.can('promote', target), false, 'targeting same rank');
-					target.group = '~';
-					assert.equal(user.can('promote', target), false, 'targeting higher rank');
+					target.tempGroup = ' ';
+					assert.equal(user.can('globalban', target), true, 'targeting lower rank');
+					target.tempGroup = '@';
+					assert.equal(user.can('globalban', target), false, 'targeting same rank');
+					target.tempGroup = '&';
+					assert.equal(user.can('globalban', target), false, 'targeting higher rank');
 				});
 				it(`should not allow users to demote themselves`, function () {
 					room = Rooms.createChatRoom("test");

@@ -91,10 +91,25 @@ class OtdHandler {
 				entry.time = Number(entry.time) || 0;
 				this.winners.push(entry);
 			}
+			this.convertNominations();
 		}).catch((error: string & {code: string}) => {
 			if (error.code !== 'ENOENT') throw new Error(error);
 			return;
 		});
+	}
+
+	/**
+	 * Handles old-format data from the IP and userid refactor
+	 */
+	convertNominations() {
+		for (const value of this.nominations.values()) {
+			if (!Array.isArray(value.userids)) value.userids = Object.keys(value.userids);
+			if (!Array.isArray(value.ips)) value.ips = Object.keys(value.ips);
+		}
+		for (const value of this.removedNominations.values()) {
+			if (!Array.isArray(value.userids)) value.userids = Object.keys(value.userids);
+			if (!Array.isArray(value.ips)) value.ips = Object.keys(value.ips);
+		}
 	}
 
 	startVote() {
@@ -121,7 +136,7 @@ class OtdHandler {
 			return user.sendTo(this.room, `This ${this.name.toLowerCase()} has already been ${this.id} in the past month.`);
 		}
 		for (const value of this.removedNominations.values()) {
-			if (toID(user) in value.userids || user.latestIp in value.ips) {
+			if (value.userids.includes(toID(user)) || value.ips.includes(user.latestIp)) {
 				return user.sendTo(
 					this.room,
 					`Since your nomination has been removed by staff, you cannot submit another ${this.name.toLowerCase()} until the next round.`
@@ -131,13 +146,13 @@ class OtdHandler {
 
 		const prevNom = this.nominations.get(id);
 		if (prevNom) {
-			if (!(toID(user) in prevNom.userids || user.latestIp in prevNom.ips)) {
+			if (!(prevNom.userids.includes(toID(user)) || prevNom.ips.includes(user.latestIp))) {
 				return user.sendTo(this.room, `This ${this.name.toLowerCase()} has already been nominated.`);
 			}
 		}
 
 		for (const [key, value] of this.nominations) {
-			if (toID(user) in value.userids || user.latestIp in value.ips) {
+			if (value.userids.includes(toID(user)) || value.ips.includes(user.latestIp)) {
 				user.sendTo(this.room, `Your previous vote for ${value.nomination} will be removed.`);
 				this.nominations.delete(key);
 				if (prenoms[this.id]) {
@@ -156,8 +171,8 @@ class OtdHandler {
 		const nomObj = {
 			nomination: nomination,
 			name: user.name,
-			userids: Object.assign(obj, user.prevNames),
-			ips: Object.assign({}, user.ips),
+			userids: user.previousIDs.slice(),
+			ips: user.ips.slice(),
 		};
 
 		this.nominations.set(id, nomObj);
@@ -258,7 +273,7 @@ class OtdHandler {
 
 		let success = false;
 		for (const [key, value] of this.nominations) {
-			if (name in value.userids) {
+			if (value.userids.includes(name)) {
 				this.removedNominations.set(key, value);
 				this.nominations.delete(key);
 				if (prenoms[this.id]) {
@@ -451,7 +466,7 @@ export const otdCommands: ChatCommands = {
 		}
 		handler.startVote();
 
-		this.privateModAction(`(${user.name} has started nominations for the ${handler.name} of the ${handler.timeLabel}.)`);
+		this.privateModAction(`${user.name} has started nominations for the ${handler.name} of the ${handler.timeLabel}.`);
 		this.modlog(`${handler.id.toUpperCase()} START`, null);
 	},
 	starthelp: [`/-otd start - Starts nominations for the Thing of the Day. Requires: % @ # &`],
@@ -473,7 +488,7 @@ export const otdCommands: ChatCommands = {
 		}
 		handler.rollWinner();
 
-		this.privateModAction(`(${user.name} has ended nominations for the ${handler.name} of the ${handler.timeLabel}.)`);
+		this.privateModAction(`${user.name} has ended nominations for the ${handler.name} of the ${handler.timeLabel}.`);
 		this.modlog(`${handler.id.toUpperCase()} END`, null);
 	},
 	endhelp: [
@@ -526,7 +541,7 @@ export const otdCommands: ChatCommands = {
 		if (!userid) return this.errorReply(`'${target}' is not a valid username.`);
 
 		if (handler.removeNomination(userid)) {
-			this.privateModAction(`(${user.name} removed ${target}'s nomination for the ${handler.name} of the ${handler.timeLabel}.)`);
+			this.privateModAction(`${user.name} removed ${target}'s nomination for the ${handler.name} of the ${handler.timeLabel}.`);
 			this.modlog(`${handler.id.toUpperCase()} REMOVENOM`, userid);
 		} else {
 			this.sendReply(`User '${target}' has no nomination for the ${handler.name} of the ${handler.timeLabel}.`);
@@ -551,7 +566,7 @@ export const otdCommands: ChatCommands = {
 			return this.sendReply(`'${target}' is not a valid ${handler.name.toLowerCase()} name.`);
 		}
 		handler.forceWinner(target, user.name);
-		this.privateModAction(`(${user.name} forcibly set the ${handler.name} of the ${handler.timeLabel} to ${target}.)`);
+		this.privateModAction(`${user.name} forcibly set the ${handler.name} of the ${handler.timeLabel} to ${target}.`);
 		this.modlog(`${handler.id.toUpperCase()} FORCE`, user.name, target);
 		room.add(`The ${handler.name} of the ${handler.timeLabel} was forcibly set to '${target}'`);
 	},
@@ -573,7 +588,7 @@ export const otdCommands: ChatCommands = {
 		}
 		clearTimeout(handler.timer);
 
-		this.privateModAction(`(${user.name} disabled the ${handler.name} of the ${handler.timeLabel} timer.)`);
+		this.privateModAction(`${user.name} disabled the ${handler.name} of the ${handler.timeLabel} timer.`);
 	},
 	delayhelp: [
 		`/-otd delay - Turns off the automatic 20 minute timer for Thing of the Day voting rounds. Requires: % @ # &`,
@@ -648,7 +663,7 @@ export const otdCommands: ChatCommands = {
 		if (keys.length) {
 			void handler.setWinnerProperty(changelist);
 			this.modlog(handler.id.toUpperCase(), null, `changed ${keys.join(', ')}`);
-			return this.privateModAction(`(${user.name} changed the following propert${Chat.plural(keys, 'ies', 'y')} of the ${handler.name} of the ${handler.timeLabel}: ${keys.join(', ')})`);
+			return this.privateModAction(`${user.name} changed the following propert${Chat.plural(keys, 'ies', 'y')} of the ${handler.name} of the ${handler.timeLabel}: ${keys.join(', ')}`);
 		}
 	},
 	sethelp: [
@@ -680,7 +695,7 @@ export const otdCommands: ChatCommands = {
 		return handler.generateWinnerDisplay().then(text => {
 			if (!text) return this.errorReply("There is no winner yet.");
 			this.sendReplyBox(text);
-			this.room.update();
+			room.update();
 		});
 	},
 };

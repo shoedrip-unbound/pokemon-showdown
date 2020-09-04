@@ -117,9 +117,9 @@ export class BattleStream extends Streams.ObjectReadWriteStream<string> {
 		}
 	}
 
-	_end() {
-		// this is in theory synchronous...
-		this.pushEnd();
+	_writeEnd() {
+		// if battle already ended, we don't need to pushEnd.
+		if (!this.atEOF) this.pushEnd();
 		this._destroy();
 	}
 
@@ -167,9 +167,7 @@ export function getPlayerStreams(stream: BattleStream) {
 		}),
 	};
 	(async () => {
-		let chunk;
-		// tslint:disable-next-line:no-conditional-assignment
-		while ((chunk = await stream.read())) {
+		for await (const chunk of stream) {
 			const [type, data] = splitFirst(chunk, `\n`);
 			switch (type) {
 			case 'update':
@@ -212,9 +210,7 @@ export abstract class BattlePlayer {
 	}
 
 	async start() {
-		let chunk;
-		// tslint:disable-next-line:no-conditional-assignment
-		while ((chunk = await this.stream.read())) {
+		for await (const chunk of this.stream) {
 			this.receive(chunk);
 		}
 	}
@@ -256,9 +252,7 @@ export class BattleTextStream extends Streams.ReadWriteStream {
 	}
 
 	async start() {
-		let message;
-		// tslint:disable-next-line:no-conditional-assignment
-		while ((message = await this.battleStream.read())) {
+		for await (let message of this.battleStream) {
 			if (!message.endsWith('\n')) message += '\n';
 			this.push(message + '\n');
 		}
@@ -274,7 +268,7 @@ export class BattleTextStream extends Streams.ReadWriteStream {
 		}
 	}
 
-	_end() {
+	_writeEnd() {
 		return this.battleStream.writeEnd();
 	}
 }

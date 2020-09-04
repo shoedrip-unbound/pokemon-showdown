@@ -22,12 +22,12 @@ describe('Rooms features', function () {
 		describe('getGame', function () {
 			it('should return the game only when the gameids match', function () {
 				const Hangman = require('../../.server-dist/chat-plugins/hangman').Hangman;
-				const Uno = require('../../.server-dist/chat-plugins/uno').UnoGame;
+				const UNO = require('../../.server-dist/chat-plugins/uno').UNO;
 				const room = Rooms.createChatRoom('r/relationshipadvice');
 				const game = new Hangman(room, new User(), 'There\'s a lot of red flags here');
 				room.game = game;
 				assert.equal(room.getGame(Hangman), game);
-				assert.equal(room.getGame(Uno), null);
+				assert.equal(room.getGame(UNO), null);
 			});
 		});
 	});
@@ -91,7 +91,7 @@ describe('Rooms features', function () {
 			roomStaff.forceRename("Room auth", true);
 			const administrator = new User();
 			administrator.forceRename("Admin", true);
-			administrator.group = '~';
+			administrator.tempGroup = '~';
 			const options = {
 				p1,
 				p2,

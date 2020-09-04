@@ -18,6 +18,23 @@
 type Comparable = number | string | boolean | Comparable[] | {reverse: Comparable};
 
 export const Utils = new class Utils {
+	/**
+	 * Safely converts the passed variable into a string. Unlike '' + str,
+	 * String(str), or str.toString(), Utils.getString is guaranteed not to
+	 * crash.
+	 *
+	 * Specifically, the fear with untrusted JSON is an object like:
+	 *
+	 *     let a = {"toString": "this is not a function"};
+	 *     console.log(`a is ${a}`);
+	 *
+	 * This will crash (because a.toString() is not a function). Instead,
+	 * getString simply returns '' if the passed variable isn't a
+	 * string or a number.
+	 */
+	getString(str: any): string {
+		return (typeof str === 'string' || typeof str === 'number') ? '' + str : '';
+	}
 	escapeRegex(str: string) {
 		return str.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 	}
@@ -150,6 +167,10 @@ export const Utils = new class Utils {
 		return array.sort((a, b) => this.compare(callback(a), callback(b)));
 	}
 
+	splitFirst(str: string, delimiter: string): [string, string];
+	splitFirst(str: string, delimiter: string, limit: 2): [string, string, string];
+	splitFirst(str: string, delimiter: string, limit: 3): [string, string, string, string];
+	splitFirst(str: string, delimiter: string, limit: number): string[];
 	/**
 	 * Like string.split(delimiter), but only recognizes the first `limit`
 	 * delimiters (default 1).
@@ -223,6 +244,16 @@ export const Utils = new class Utils {
 
 			if (!skip) delete require.cache[path];
 		}
+	}
+
+	deepClone(obj: any): any {
+		if (obj === null || typeof obj !== 'object') return obj;
+		if (Array.isArray(obj)) return obj.map(prop => this.deepClone(prop));
+		const clone = Object.create(Object.getPrototypeOf(obj));
+		for (const key of Object.keys(obj)) {
+			clone[key] = this.deepClone(obj[key]);
+		}
+		return clone;
 	}
 
 	levenshtein(s: string, t: string, l: number): number {
