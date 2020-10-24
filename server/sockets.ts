@@ -26,8 +26,7 @@ type ChannelID = 0 | 1 | 2 | 3 | 4;
 export const Sockets = new class {
 	async onSpawn(worker: StreamWorker) {
 		const id = worker.workerid;
-		let data;
-		while ((data = await worker.stream.read())) {
+		for await (const data of worker.stream) {
 			switch (data.charAt(0)) {
 			case '*': {
 				// *socketid, ip, protocol
@@ -209,7 +208,7 @@ export class ServerStream extends Streams.ObjectReadWriteStream<string> {
 			if (key && cert) {
 				try {
 					// In case there are additional SSL config settings besides the key and cert...
-					this.serverSsl = https.createServer(Object.assign({}, config.ssl.options, {key, cert}));
+					this.serverSsl = https.createServer({...config.ssl.options, key, cert});
 				} catch (e) {
 					crashlogger(new Error(`The SSL settings are misconfigured:\n${e.stack}`), `Socket process ${process.pid}`);
 				}
@@ -458,9 +457,11 @@ export class ServerStream extends Streams.ObjectReadWriteStream<string> {
 		case '#':
 			// #roomid, message
 			// message to all connections in room
+			// #, message
+			// message to all connections
 			nlLoc = data.indexOf('\n');
 			roomid = data.substr(1, nlLoc - 1) as RoomID;
-			room = this.rooms.get(roomid);
+			room = roomid ? this.rooms.get(roomid) : this.sockets;
 			if (!room) return;
 			message = data.substr(nlLoc + 1);
 			for (const curSocket of room.values()) curSocket.write(message);
@@ -563,9 +564,7 @@ if (!PM.isParentProcess) {
 			crashlogger(err, `Socket process ${PM.workerid} (${process.pid})`);
 		});
 		process.on('unhandledRejection', err => {
-			if (err instanceof Error) {
-				crashlogger(err, `Socket process ${PM.workerid} (${process.pid}) Promise`);
-			}
+			crashlogger(err as any || {}, `Socket process ${PM.workerid} (${process.pid}) Promise`);
 		});
 	}
 

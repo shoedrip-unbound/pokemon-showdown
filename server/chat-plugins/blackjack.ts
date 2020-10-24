@@ -18,7 +18,7 @@ type Symbols = '♥' | '♦' | '♣' | '♠';
 type SymbolName = 'Hearts' | 'Diamonds' | 'Clubs' | 'Spades';
 
 export class Blackjack extends Rooms.RoomGame {
-	room: ChatRoom | GameRoom;
+	room: Room;
 
 	blackjack: boolean;
 
@@ -56,7 +56,7 @@ export class Blackjack extends Rooms.RoomGame {
 	playerTable: {[k: string]: BlackjackPlayer};
 	gameNumber: number;
 
-	constructor(room: ChatRoom | GameRoom, user: User, autostartMinutes = 0) {
+	constructor(room: Room, user: User, autostartMinutes = 0) {
 		super(room);
 		this.gameNumber = room.nextGameNumber();
 		this.room = room;
@@ -662,33 +662,36 @@ export const commands: ChatCommands = {
 	blackjack: {
 		new: 'create',
 		create(target, room, user) {
-			if (!this.can('minigame', null, room)) return;
+			room = this.requireRoom();
+			this.checkCan('minigame', null, room);
 			if (room.game) return this.errorReply("There is already a game running in this room.");
 			if (room.settings.blackjackDisabled) return this.errorReply("Blackjack is currently disabled in this room.");
 			const autostartMinutes = target ? parseFloat(target) : 0;
-			if (isNaN(autostartMinutes)) {
+			if (isNaN(autostartMinutes) || autostartMinutes <= 0 || (autostartMinutes * 60 * 1000) > Chat.MAX_TIMEOUT_DURATION) {
 				return this.errorReply("Usage: /blackjack create [autostart] - where autostart is an integer");
 			}
 
-			this.privateModAction(`(A game of blackjack was created by ${user.name}.)`);
+			this.privateModAction(`A game of blackjack was created by ${user.name}.`);
 			this.modlog(`BLACKJACK CREATE`);
 			room.game = new Blackjack(room, user, autostartMinutes);
 		},
 		start(target, room, user) {
-			if (!this.can('minigame', null, room)) return;
+			room = this.requireRoom();
+			this.checkCan('minigame', null, room);
 			const game = room.getGame(Blackjack);
 			if (!game || !game.blackjack) {
 				return this.errorReply("There is no game of blackjack currently ongoing in this room.");
 			}
 			if (game.state !== 'signups') return this.errorReply("This game of blackjack has already started.");
 
-			this.privateModAction(`(The game of blackjack was started by ${user.name}.)`);
+			this.privateModAction(`The game of blackjack was started by ${user.name}.`);
 			this.modlog(`BLACKJACK START`);
 			game.start(user);
 		},
 		forceend: 'end',
 		end(target, room, user, connection, cmd) {
-			if (!this.can('minigame', null, room)) return;
+			room = this.requireRoom();
+			this.checkCan('minigame', null, room);
 			const game = room.getGame(Blackjack);
 			if (!game || !game.blackjack) {
 				return this.errorReply("There is no game of blackjack currently ongoing in this room.");
@@ -697,11 +700,12 @@ export const commands: ChatCommands = {
 
 			const end = game.end(user, cmd);
 			if (end) {
-				this.privateModAction(`(The game of blackjack was ${force}ended by ${user.name}.)`);
+				this.privateModAction(`The game of blackjack was ${force}ended by ${user.name}.`);
 				this.modlog(`BLACKJACK END`);
 			}
 		},
 		hit(target, room, user) {
+			room = this.requireRoom();
 			const game = room.getGame(Blackjack);
 			if (!game || !game.blackjack) {
 				return this.errorReply("There is no game of blackjack currently ongoing in this room.");
@@ -710,6 +714,7 @@ export const commands: ChatCommands = {
 			game.hit(user);
 		},
 		stand(target, room, user) {
+			room = this.requireRoom();
 			const game = room.getGame(Blackjack);
 			if (!game || !game.blackjack) {
 				return this.errorReply("There is no game of blackjack currently ongoing in this room.");
@@ -718,6 +723,7 @@ export const commands: ChatCommands = {
 			game.stand(user);
 		},
 		slide(target, room, user) { // undocumented (used in UI)
+			room = this.requireRoom();
 			const game = room.getGame(Blackjack);
 			if (!game || !game.blackjack) {
 				return this.errorReply("There is no game of blackjack currently ongoing in this room.");
@@ -735,6 +741,7 @@ export const commands: ChatCommands = {
 		},
 		unspectate: 'spectate',
 		spectate(target, room, user, connection, cmd) {
+			room = this.requireRoom();
 			const game = room.getGame(Blackjack);
 			if (!game || !game.blackjack) {
 				return this.errorReply("There is no game of blackjack currently ongoing in this room.");
@@ -747,7 +754,8 @@ export const commands: ChatCommands = {
 			}
 		},
 		disable(target, room, user) {
-			if (!this.can('gamemanagement', null, room)) return;
+			room = this.requireRoom();
+			this.checkCan('gamemanagement', null, room);
 			if (room.settings.blackjackDisabled) {
 				return this.errorReply("Blackjack is already disabled in this room.");
 			}
@@ -756,7 +764,8 @@ export const commands: ChatCommands = {
 			this.sendReply(`Blackjack has been disabled for this room.`);
 		},
 		enable(target, room, user) {
-			if (!this.can('gamemanagement', null, room)) return;
+			room = this.requireRoom();
+			this.checkCan('gamemanagement', null, room);
 			if (!room.settings.blackjackDisabled) {
 				return this.errorReply("Blackjack is already enabled in this room.");
 			}
