@@ -7,8 +7,9 @@
  * @license MIT
  */
 
-import {Dex} from './dex';
-const toID = Dex.Data.Tools.getId;
+import {Dex, toID} from './dex';
+import {Utils} from '../lib/utils';
+
 /**
  * Describes a possible way to get a pokemon. Is not exhaustive!
  * sourcesBefore covers all sources that do not have exclusive
